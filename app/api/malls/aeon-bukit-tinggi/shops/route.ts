@@ -53,11 +53,12 @@ export async function GET() {
           return [];
         }
 
-        const coordinates =
-          Number(tenantId) === 14810 && name.toLocaleLowerCase().includes("padini")
-            ? { lat: 2.9939452, lon: 101.444546 }
-            : {};
-
+            const coordinatesByTenantId: Record<number, { lat: number; lon: number }> = {
+          14810: { lat: 2.9939452, lon: 101.444546 }, // Padini
+          14881: { lat: 3.00175582929425, lon: 101.44357676517059 },// UNIQLO
+        };
+        
+        const coordinates = coordinatesByTenantId[Number(tenantId)] ?? {};
         return [{
           id: Number(tenantId),
           name,

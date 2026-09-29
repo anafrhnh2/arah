@@ -23,9 +23,10 @@ type OrientationConstructor = typeof DeviceOrientationEvent & {
   requestPermission?: () => Promise<"granted" | "denied">;
 };
 
-const DUMMY_USER_LOCATION = {
-  lat: 2.99295,
-  lon: 101.4435,
+type UserLocation = {
+  lat: number;
+  lon: number;
+  accuracy: number;
 };
 
 function toRadians(value: number) {
@@ -61,7 +62,7 @@ function getBearingDegrees(
       Math.cos(destinationLatitude) *
       Math.cos(longitudeDifference);
 
-  return (Math.atan2(y, x) * 180) / Math.PI + 360 % 360;
+  return normalizeDegrees((Math.atan2(y, x) * 180) / Math.PI);
 }
 
 function normalizeDegrees(value: number) {
@@ -80,6 +81,9 @@ export default function ArCamera({ target, backHref }: Props) {
   const [isStarting, setIsStarting] = useState(false);
   const [cameraError, setCameraError] = useState("");
   const [sensorMessage, setSensorMessage] = useState("");
+  const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
+  const [isLocating, setIsLocating] = useState(false);
+  const [locationError, setLocationError] = useState("");
 
   useEffect(() => {
     const video = videoRef.current;
@@ -108,6 +112,7 @@ export default function ArCamera({ target, backHref }: Props) {
   }, [cameraStream]);
 
   async function startCamera() {
+    if (!userLocation) return;
     setIsStarting(true);
     setCameraError("");
     setSensorMessage("");
@@ -153,13 +158,46 @@ export default function ArCamera({ target, backHref }: Props) {
     setHasLiveHeading(false);
   }
 
-  const targetBearing = target
-    ? normalizeDegrees(getBearingDegrees(DUMMY_USER_LOCATION, target))
-    : 0;
-  const relativeBearing = getRelativeBearing(targetBearing, heading);
-  const distanceMeters = target
-    ? Math.round(getDistanceMeters(DUMMY_USER_LOCATION, target))
-    : 0;
+  function getCurrentLocation() {
+    if (!navigator.geolocation) {
+      setLocationError("Location is unavailable in this browser. Try using HTTPS on a supported phone.");
+      return;
+    }
+
+    setIsLocating(true);
+    setLocationError("");
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => {
+        setUserLocation({
+          lat: coords.latitude,
+          lon: coords.longitude,
+          accuracy: coords.accuracy,
+        });
+        setIsLocating(false);
+      },
+      (error) => {
+        setLocationError(
+          error.code === error.PERMISSION_DENIED
+            ? "Location permission was denied. Allow location access and try again."
+            : error.code === error.TIMEOUT
+              ? "Location took too long. Try again outdoors or near an open area."
+              : "Could not determine your location. Check device location services and retry.",
+        );
+        setIsLocating(false);
+      },
+      { enableHighAccuracy: true, maximumAge: 10_000, timeout: 15_000 },
+    );
+  }
+
+  const targetBearing = target && userLocation
+    ? getBearingDegrees(userLocation, target)
+    : null;
+  const relativeBearing = targetBearing === null
+    ? 0
+    : getRelativeBearing(targetBearing, heading);
+  const distanceMeters = target && userLocation
+    ? Math.round(getDistanceMeters(userLocation, target))
+    : null;
 
   return (
     <main className="finder-page ar-page">
@@ -175,7 +213,11 @@ export default function ArCamera({ target, backHref }: Props) {
       <section className="ar-intro" aria-labelledby="ar-title">
         <p className="eyebrow">CAMERA COMPASS / TEST MODE</p>
         <h1 id="ar-title">{target?.name ?? "Choose a shop"}</h1>
-        <p>{target ? `${target.floor} · ${distanceMeters} m from simulated start` : "Shop coordinates are missing."}</p>
+        <p>
+          {target
+            ? `${target.floor}${distanceMeters === null ? " · Set your location to begin" : ` · ${distanceMeters} m away`}`
+            : "Shop coordinates are missing."}
+        </p>
       </section>
 
       <section className="ar-workspace" aria-label="Camera direction test">
@@ -190,7 +232,7 @@ export default function ArCamera({ target, backHref }: Props) {
             </div>
           )}
           <div className="ar-camera-shade" />
-          {target && (
+          {target && userLocation && targetBearing !== null && (
             <div
               className="ar-direction-arrow"
               style={{ transform: `translate(-50%, -50%) rotate(${relativeBearing}deg)` }}
@@ -200,7 +242,9 @@ export default function ArCamera({ target, backHref }: Props) {
             </div>
           )}
           <div className="ar-camera-tag">{cameraStream ? "LIVE CAMERA" : "SIMULATED CAMERA VIEW"}</div>
-          <div className="ar-camera-distance">{target ? `${distanceMeters} m` : "No destination"}</div>
+          <div className="ar-camera-distance">
+            {distanceMeters === null ? "Set location" : `${distanceMeters} m`}
+          </div>
         </div>
 
         <aside className="ar-controls">
@@ -220,8 +264,25 @@ export default function ArCamera({ target, backHref }: Props) {
           </div>
 
           <div className="ar-origin">
-            <p className="eyebrow">DUMMY START LOCATION</p>
-            <p>{DUMMY_USER_LOCATION.lat.toFixed(6)}, {DUMMY_USER_LOCATION.lon.toFixed(6)}</p>
+            <p className="eyebrow">YOUR LOCATION</p>
+            {userLocation ? (
+              <>
+                <p>{userLocation.lat.toFixed(6)}, {userLocation.lon.toFixed(6)}</p>
+                <p className="ar-location-accuracy">GPS accuracy ±{Math.round(userLocation.accuracy)} m</p>
+              </>
+            ) : (
+              <p>Location not set</p>
+            )}
+            <button
+              className="ar-location-button"
+              type="button"
+              onClick={getCurrentLocation}
+              disabled={isLocating}
+            >
+              <span aria-hidden="true">◎</span>
+              {isLocating ? "Getting location..." : userLocation ? "Refresh location" : "Use my current location"}
+            </button>
+            {locationError && <p className="ar-error" role="alert">{locationError}</p>}
           </div>
 
           <div className="ar-heading-control">
@@ -236,10 +297,14 @@ export default function ArCamera({ target, backHref }: Props) {
               max="359"
               step="1"
               value={Math.round(heading)}
-              disabled={hasLiveHeading}
+              disabled={!userLocation || hasLiveHeading}
               onChange={(event) => setHeading(Number(event.target.value))}
             />
-            <p>{sensorMessage || "Move the slider to simulate turning the phone; the arrow should rotate toward the top as it faces Padini."}</p>
+            <p>
+              {sensorMessage || (userLocation
+                ? "Move the slider to simulate turning the phone; the arrow points toward the selected shop."
+                : "Set your current location before testing the direction arrow.")}
+            </p>
           </div>
 
           {cameraError && <p className="ar-error" role="alert">{cameraError}</p>}
@@ -248,13 +313,13 @@ export default function ArCamera({ target, backHref }: Props) {
             className="ar-camera-button"
             type="button"
             onClick={cameraStream ? stopCamera : startCamera}
-            disabled={isStarting || !target}
+            disabled={isStarting || !target || !userLocation}
           >
             {isStarting ? "Starting camera..." : cameraStream ? "Stop camera" : "Start AR camera"}
           </button>
 
           <p className="ar-test-note">
-            Demo only: the start point is simulated. Indoor compass and this map pin may not be accurate enough for real store navigation.
+            GPS and compass can drift indoors. This arrow is a straight-line guide, not an indoor walking route.
           </p>
         </aside>
       </section>
