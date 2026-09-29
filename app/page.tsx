@@ -20,7 +20,7 @@ export default function Home() {
               <span>Start Navigate</span>
               <span className="menu-arrow" aria-hidden="true">↗</span>
             </a>
-            <a href="#contact">
+            <a href="/parking">
               <span>02</span>
               <span>Save Parking</span>
               <span className="menu-arrow" aria-hidden="true">↗</span>
